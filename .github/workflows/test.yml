@@ -1,0 +1,77 @@
+name: CI Pipeline
+
+on:
+  - push
+  - pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - go
+          - node
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.runtime }}
+        if: matrix.runtime == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Set up Node.js ${{ matrix.runtime }}
+        if: matrix.runtime == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: false
+
+      - name: Install Go dependencies
+        if: matrix.runtime == 'go' && hashFiles('go.mod') != ''
+        run: go mod download
+
+      - name: Install Node dependencies
+        if: matrix.runtime == 'node' && hashFiles('package.json') != ''
+        run: npm install
+
+      - name: Check Go formatting
+        if: matrix.runtime == 'go' && hashFiles('go.mod') != ''
+        run: test -z "$(gofmt -l . -- *.go 2>/dev/null || true)"
+
+      - name: Check Node formatting
+        if: matrix.runtime == 'node' && hashFiles('package.json') != ''
+        run: npx prettier --check .
+
+      - name: Build Go code
+        if: matrix.runtime == 'go' && hashFiles('go.mod') != ''
+        run: go build ./...
+
+      - name: Typecheck Node code
+        if: matrix.runtime == 'node' && hashFiles('package.json') != ''
+        run: npx tsc --noEmit
+
+      - name: Run Go tests
+        if: matrix.runtime == 'go' && hashFiles('go.mod') != ''
+        run: go test ./...
+
+      - name: Run Node tests
+        if: matrix.runtime == 'node' && hashFiles('package.json') != ''
+        run: npm test
+
+      - name: Write pipeline summary
+        if: always()
+        shell: bash
+        run: |
+          { printf '## CI Pipeline Summary\n\n'; printf '| Runtime | Outcome |\n| --- | --- |\n'; for entry in ${{ toJSON(matrix.runtime) }}; do printf '| %s | %s |\n' "$entry" "${{ steps.${entry}.outcome }}"; done; } >> "$GITHUB_STEP_SUMMARY"
